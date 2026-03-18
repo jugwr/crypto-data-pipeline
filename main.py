@@ -1,10 +1,28 @@
 import requests
 import pandas as pd
 import sqlite3
+import logging
+from datetime import datetime, timezone, timedelta
+
+# Set the timezone to UTC +7 TH
+th_tz = timezone(timedelta(hours=7))
+
+# Get the current time in UTC +7 TH
+logging.Formatter.converter = staticmethod(lambda ts: datetime.fromtimestamp(ts, th_tz).timetuple())
+
+# Configure logging
+logging.basicConfig(
+    level = logging.INFO, # Set the logging level
+    format = '%(asctime)s - %(levelname)s - %(message)s', # Set the log message format
+    datefmt = '%Y-%m-%d %H:%M:%S'
+)
+
+# Create a logger instance
+logger = logging.getLogger(__name__)
 
 # Extract Process
 def extract_crypto_data():
-    print("Starting crypto data extraction...")
+    logger.info("Starting crypto data extraction...")
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {
         "vs_currency": "usd",
@@ -18,17 +36,17 @@ def extract_crypto_data():
         response = requests.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        print(f"Extract success Retrieved {len(data)} coins.")
+        logger.info(f"Extract success Retrieved {len(data)} coins.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error during extraction: {e}")
+        logger.error(f"Error during extraction: {e}", exc_info = True)
         return None
 
 # Transform Process
 def transform_crypto_data(raw_data):
-    print("Starting Transform Process...")
+    logger.info("Starting Transform Process...")
     if not raw_data:
-        print("No data to transform.")
+        logger.warning("No data to transform.(raw_data is empty or none)")
         return None
 
     df = pd.DataFrame(raw_data)
@@ -37,47 +55,51 @@ def transform_crypto_data(raw_data):
     df = df.dropna()
 
     df['last_updated'] = pd.to_datetime(df['last_updated'])
-    print(f"Transform success. DataFrame shape: {df.shape[0]} rows, {df.shape[1]} columns.")
+    logger.info(f"Transform success. DataFrame shape: {df.shape[0]} rows, {df.shape[1]} columns.")
     return df
 
 # Load Process
 def load_crypto_data(df, db_name='crypto_data.db', table_name='crypto_prices'):
-    print("Starting Load Process...")
+    logger.info("Starting Load Process...")
     if df is None or df.empty:
-        print("No data to load.")
+        logger.warning("No data to load. (DataFrame is empty or None))")
         return False
 
     try:
         conn = sqlite3.connect(db_name)
         df.to_sql(table_name, conn, if_exists='replace', index=False)
-        print(f"Data loaded successfully to table '{table_name}' in database '{db_name}'.")
+        logger.info(f"Data loaded successfully to table '{table_name}' in database '{db_name}'.")
 
         cursor = conn.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         row_count = cursor.fetchone()[0]
-        print(f"Verified Found '{row_count}' rows in the database table.")
+        logger.info(f"Verified Found '{row_count}' rows in the database table.")
 
         conn.close()
         return True
     except Exception as e:
-        print(f"Error during loading: {e}")
+        logger.error(f"Error during loading: {e}", exc_info = True)
         return False
 
 # Start Process Run
 if __name__ == "__main__":
-    print("Starting ETL Process...")
+    logger.info("Starting ETL Process...")
 
     # Extract: E
     raw_data = extract_crypto_data()
-    print("-" * 32)
 
     if raw_data:
         # Transform: T
         transformed_data = transform_crypto_data(raw_data)
-        print("-" * 32)
 
         if transformed_data is not None:
             # Load: L
             load_success = load_crypto_data(transformed_data)
-
-    print("\nETL Process Completed.")
+            if  load_success:
+                logger.info("ETL Process completed successfully.")
+            else:
+                logger.error("ETL Process failed during the load phase.")
+        else:
+             logger.error("ETL Process failed during the transform phase.")
+    else:
+        logger.error("ETL Process failed during the extract phase.")
